@@ -348,7 +348,7 @@ def LoginScreen(controller):
         wrap_lines=False,
         password=True,
         accept_handler=on_pin_textfield_accept,
-        get_line_prefix=lambda _, __: '[password]: ',
+        get_line_prefix=lambda _, __: '[pin]: ',
         style='bg:#88ff88 #000000 italic'
     )
 
