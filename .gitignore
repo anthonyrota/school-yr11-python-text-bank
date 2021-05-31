@@ -1,0 +1,7 @@
+__pycache__
+poetry.lock
+pyproject.toml
+.idea
+node_modules
+.DS_Store
+.vscode
