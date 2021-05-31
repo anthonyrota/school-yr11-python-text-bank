@@ -254,7 +254,7 @@ def load_db():
 
 def save_db(db):
     with open(db_file_path, 'w') as file:
-        json.dump(db.json(), file)
+        json.dump(db.json(), file, separators=(',', ':'))
     with open(insecure_txt_file_path, 'w') as file:
         file.write(db.insecure_txt())
 
