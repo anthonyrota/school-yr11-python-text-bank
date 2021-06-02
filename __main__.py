@@ -1406,7 +1406,7 @@ def build_application():
     keybindings.add('tab')(focus_next)
     keybindings.add('s-tab')(focus_previous)
 
-    @ keybindings.add('c-c')
+    @keybindings.add('c-c')
     def _on_key_ctrl_c(_):
         exit_current_app()
 
