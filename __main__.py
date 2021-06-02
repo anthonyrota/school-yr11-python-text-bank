@@ -1,14 +1,13 @@
-from abc import ABC, abstractmethod
-from functools import reduce
 from enum import Enum, auto
-from time import time as now
 from platform import system
 from uuid import uuid4
+from datetime import datetime
 import os
 import hashlib
 import hmac
 import json
 import base64
+import re
 
 from prompt_toolkit import HTML
 from prompt_toolkit.styles import Style
@@ -54,57 +53,69 @@ def exit_current_app():
 
 class RootScreenType(Enum):
     LOGIN = auto()
+    SIGN_UP = auto()
     MENU = auto()
-    CHECK_BALANCE = auto()
     DEPOSIT = auto()
     WITHDRAW = auto()
     ACCOUNT = auto()
+    CHANGE_USERNAME = auto()
+    CHANGE_NAME = auto()
+    CHANGE_PIN = auto()
+    DELETE_ACCOUNT_1 = auto()
+    DELETE_ACCOUNT_2 = auto()
 
 
-class LoginScreenState:
+class ScreenState:
+    def __init__(self, session):
+        self.session = session
+
+
+class LoginScreenState(ScreenState):
     """Initial screen where user logs in using their credentials. Users can also
     sign up to create a new account. After entering the form the user is taken to
     the menu screen."""
     root_screen_type = RootScreenType.LOGIN
 
-    def __init__(self, session):
-        self.session = session
+
+class SignUpScreenState(ScreenState):
+    root_screen_type = RootScreenType.SIGN_UP
 
 
-class MenuScreenState:
+class MenuScreenState(ScreenState):
     """Screen where user can navigate to all the other screens/use ATM's functions"""
     root_screen_type = RootScreenType.MENU
 
-    def __init__(self, session):
-        self.session = session
 
-
-class CheckBalanceScreenState:
-    root_screen_type = RootScreenType.CHECK_BALANCE
-
-    def __init__(self, session):
-        self.session = session
-
-
-class DepositScreenState:
+class DepositScreenState(ScreenState):
     root_screen_type = RootScreenType.DEPOSIT
 
-    def __init__(self, session):
-        self.session = session
 
-
-class WithdrawScreenState:
+class WithdrawScreenState(ScreenState):
     root_screen_type = RootScreenType.WITHDRAW
 
-    def __init__(self, session):
-        self.session = session
 
-
-class AccountScreenState:
+class AccountScreenState(ScreenState):
     root_screen_type = RootScreenType.ACCOUNT
 
-    def __init__(self, session):
-        self.session = session
+
+class ChangeUsernameScreenState(ScreenState):
+    root_screen_type = RootScreenType.CHANGE_USERNAME
+
+
+class ChangeNameScreenState(ScreenState):
+    root_screen_type = RootScreenType.CHANGE_NAME
+
+
+class ChangePinScreenState(ScreenState):
+    root_screen_type = RootScreenType.CHANGE_PIN
+
+
+class DeleteAccount1ScreenState(ScreenState):
+    root_screen_type = RootScreenType.DELETE_ACCOUNT_1
+
+
+class DeleteAccount2ScreenState(ScreenState):
+    root_screen_type = RootScreenType.DELETE_ACCOUNT_2
 
 
 class Session:
@@ -153,6 +164,13 @@ def decode_bytes(b):
     return base64.b64decode(b)
 
 
+def format_balance(balance):
+    balance_str = str(balance).zfill(3)
+    dollars = balance_str[:-2]
+    cents = balance_str[-2:]
+    return f'${dollars}.{cents}'
+
+
 class DB:
     def __init__(self, data, insecure_txt_db):
         self._data = data
@@ -168,7 +186,8 @@ class DB:
                 "salt": decode_bytes(account['pin'][0]),
                 "pw_hash": decode_bytes(account['pin'][1])
             },
-            "balance": account['balance']
+            "balance": int(account['balance']),
+            "created_at": datetime.fromtimestamp(account['created_at'])
         }
 
     def get_account_from_username(self, username):
@@ -178,6 +197,50 @@ class DB:
         account_id = account_username_to_account_id[username]
         return self.get_account_from_account_id(account_id)
 
+    def make_account_with_details(self, username, name, pin):
+        account_id = str(uuid4())
+        salt, pw_hash = hash_new_password(pin)
+        self._data['accounts'][account_id] = {
+            'username': username,
+            'name': name,
+            'pin': [encode_bytes(salt), encode_bytes(pw_hash)],
+            'balance': 0,
+            'created_at': datetime.now().timestamp()
+        }
+        self._data['account_username_to_account_id'][username] = account_id
+        self._insecure_text_db[account_id] = pin
+        save_db(self)
+        return account_id
+
+    def change_account_username(self, account_id, new_username):
+        old_username = self._data['accounts'][account_id]['username']
+        self._data['accounts'][account_id]['username'] = new_username
+        self._data['account_username_to_account_id'].pop(old_username)
+        self._data['account_username_to_account_id'][new_username] = account_id
+        save_db(self)
+
+    def change_account_name(self, account_id, new_name):
+        self._data['accounts'][account_id]['name'] = new_name
+        save_db(self)
+
+    def change_account_pin(self, account_id, new_pin):
+        salt, pw_hash = hash_new_password(new_pin)
+        self._data['accounts'][account_id]['pin'] = [
+            encode_bytes(salt), encode_bytes(pw_hash)]
+        self._insecure_text_db[account_id] = new_pin
+        save_db(self)
+
+    def delete_account(self, account_id):
+        username = self._data['accounts'][account_id]['username']
+        self._data['accounts'].pop(account_id)
+        self._data['account_username_to_account_id'].pop(username)
+        self._insecure_text_db.pop(account_id)
+        save_db(self)
+
+    def set_account_balance(self, account_id, new_balance):
+        self._data['accounts'][account_id]['balance'] = new_balance
+        save_db(self)
+
     def json(self):
         return self._data
 
@@ -185,16 +248,16 @@ class DB:
         insecure_txt_db_json = json.dumps(
             self._insecure_text_db, separators=(',', ':'))
         table = []
-        table.append(['account_id', 'username', 'name', 'pin', 'balance'])
+        table.append(['account_id', 'created_at',
+                      'username', 'name', 'pin', 'balance'])
         for account_id, account_data in self._data['accounts'].items():
+            created_at = str(account_data['created_at'])
             username = account_data['username']
             name = account_data['name']
             pin = str(self._insecure_text_db[account_id])
-            balance_raw = str(account_data['balance'])
-            dollars = balance_raw[:-2]
-            cents = balance_raw[-2:]
-            balance = f'${dollars}.{cents}'
-            table.append([account_id, username, name, pin, balance])
+            balance = format_balance(account_data['balance'])
+            table.append(
+                [account_id, created_at, username, name, pin, balance])
         return f'{insecure_txt_db_json}\n\nIF YOU ARE NOT MR. DUNNE CLOSE THIS FILE IMMEDIATELY😡😡😡😡😡!!!!!!!!! YOU ARE INTELLECTUALLY TRESPASSING!!1!!1!\n{table_to_txt(table)}\n'
 
 
@@ -258,10 +321,9 @@ def save_db(db):
     with open(insecure_txt_file_path, 'w') as file:
         file.write(db.insecure_txt())
 
-# https://stackoverflow.com/questions/9594125/salt-and-hash-a-password-in-python/56915300#56915300
-
 
 def hash_new_password(password):
+    # https://stackoverflow.com/questions/9594125/salt-and-hash-a-password-in-python/56915300#56915300
     """
     Hash the provided password with a randomly-generated salt and return the
     salt and hash to store in the database.
@@ -282,6 +344,10 @@ def is_correct_password(salt, pw_hash, password):
     )
 
 
+def is_alnum_and_starts_with_al(str):
+    return len(str) == 0 or (str.isalnum() and str[0].isalpha())
+
+
 def LoginScreen(controller):
     error_msg = None
 
@@ -292,6 +358,11 @@ def LoginScreen(controller):
 
     def check_username_valid(username):
         if len(username.strip()) > 0:
+            if not is_alnum_and_starts_with_al(username.strip()):
+                get_app().layout.focus(username_textfield)
+                set_error_msg(
+                    "Username must start with a letter and only contain letters/numbers")
+                return False
             return True
         get_app().layout.focus(username_textfield)
         set_error_msg("Username field is empty")
@@ -334,14 +405,20 @@ def LoginScreen(controller):
         controller.set_state(MenuScreenState(
             Session(db=controller.state.session.db, account_id=account['account_id'])))
 
+    def on_sign_up_clicked():
+        # Go to Sign Up screen.
+        new_state = SignUpScreenState(session=controller.state.session)
+        controller.set_state(new_state)
+
     ok_button = Button(text="Login", handler=on_ok_clicked)
     exit_button = Button(text="Quit", handler=exit_current_app)
+    sign_up_button = Button(text="Sign Up", handler=on_sign_up_clicked)
     username_textfield = TextArea(
         multiline=False,
         wrap_lines=False,
         accept_handler=on_username_textfield_accept,
         get_line_prefix=lambda _, __: '[username]: ',
-        style='bg:#88ff88 #000000 italic'
+        style=f'bg:{dialog_bg_color} {dialog_text_color} italic'
     )
     pin_textfield = TextArea(
         multiline=False,
@@ -349,27 +426,154 @@ def LoginScreen(controller):
         password=True,
         accept_handler=on_pin_textfield_accept,
         get_line_prefix=lambda _, __: '[pin]: ',
-        style='bg:#88ff88 #000000 italic'
+        style=f'bg:{dialog_bg_color} {dialog_text_color} italic'
     )
 
     dialog = Dialog(
         title="SMH Bank",
         body=HSplit(
             [
-                Label(text=HTML('<u>Login</u>'), dont_extend_height=True),
+                Label(text=HTML('<b>Login</b>'), dont_extend_height=True),
                 username_textfield,
                 pin_textfield,
                 DynamicContainer(
                     get_container=lambda: Label(
                         text=error_msg or '',
                         dont_extend_height=True,
-                        style="#dd0000"
+                        style=danger_text_color
                     )
                 )
             ],
             padding=Dimension(preferred=1, max=1)
         ),
-        buttons=[ok_button, exit_button],
+        buttons=[ok_button, sign_up_button, exit_button],
+        with_background=True
+    )
+
+    return dialog
+
+
+def SignUpScreen(controller):
+    error_msg = None
+
+    def set_error_msg(msg):
+        nonlocal error_msg
+        error_msg = msg
+        get_app().invalidate()
+
+    def check_username_valid(username):
+        if len(username.strip()) > 0:
+            if not controller.state.session.db.get_account_from_username(username.strip().lower()):
+                if not is_alnum_and_starts_with_al(username.strip()):
+                    get_app().layout.focus(username_textfield)
+                    set_error_msg(
+                        "Username must start with a letter and only contain letters/numbers")
+                    return False
+                return True
+            get_app().layout.focus(username_textfield)
+            set_error_msg("Username is already taken")
+            return False
+        get_app().layout.focus(username_textfield)
+        set_error_msg("Username field is empty")
+        return False
+
+    def check_name_valid(name):
+        if len(name.strip()) > 0:
+            return True
+        get_app().layout.focus(name_textfield)
+        set_error_msg("Name field is empty")
+        return False
+
+    def check_pin_valid(pin):
+        if len(pin) == 4 and pin.isdecimal():
+            return True
+        get_app().layout.focus(pin_textfield)
+        set_error_msg("Please enter 4 digits for Pin field")
+        return False
+
+    def on_username_textfield_accept(_buffer):
+        if check_username_valid(username_textfield.text) and check_name_valid(name_textfield.text) and check_pin_valid(pin_textfield.text):
+            set_error_msg(None)
+            get_app().layout.focus(ok_button)
+        return True  # Keeps text.
+
+    def on_name_textfield_accept(_buffer):
+        if check_name_valid(name_textfield.text) and check_username_valid(username_textfield.text) and check_pin_valid(pin_textfield.text):
+            set_error_msg(None)
+            get_app().layout.focus(ok_button)
+        return True  # Keeps text.
+
+    def on_pin_textfield_accept(_buffer):
+        if check_pin_valid(pin_textfield.text) and check_username_valid(username_textfield.text) and check_name_valid(name_textfield.text):
+            set_error_msg(None)
+            get_app().layout.focus(ok_button)
+        return True  # Keeps text.
+
+    def on_ok_clicked():
+        username = username_textfield.text.strip().lower()
+        name = name_textfield.text.strip()
+        pin = pin_textfield.text
+        if not check_username_valid(username) or not check_name_valid(username) or not check_pin_valid(pin_textfield.text):
+            return
+        set_error_msg(None)
+        account_id = controller.state.session.db.make_account_with_details(
+            username=username,
+            name=name,
+            pin=pin
+        )
+        controller.set_state(MenuScreenState(
+            Session(db=controller.state.session.db, account_id=account_id)))
+
+    def on_back_clicked():
+        # Go to Sign Up screen.
+        new_state = LoginScreenState(session=controller.state.session)
+        controller.set_state(new_state)
+
+    back_button = Button(text="Back", handler=on_back_clicked)
+    ok_button = Button(text="Sign Up", handler=on_ok_clicked)
+    exit_button = Button(text="Quit", handler=exit_current_app)
+    username_textfield = TextArea(
+        multiline=False,
+        wrap_lines=False,
+        accept_handler=on_username_textfield_accept,
+        get_line_prefix=lambda _, __: '[username]: ',
+        style=f'bg:{dialog_bg_color} {dialog_text_color} italic'
+    )
+    name_textfield = TextArea(
+        multiline=False,
+        wrap_lines=False,
+        accept_handler=on_name_textfield_accept,
+        get_line_prefix=lambda _, __: '[full name]: ',
+        style=f'bg:{dialog_bg_color} {dialog_text_color} italic'
+    )
+    pin_textfield = TextArea(
+        multiline=False,
+        wrap_lines=False,
+        password=True,
+        accept_handler=on_pin_textfield_accept,
+        get_line_prefix=lambda _, __: '[pin]: ',
+        style=f'bg:{dialog_bg_color} {dialog_text_color} italic'
+    )
+
+    dialog = Dialog(
+        title="SMH Bank",
+        body=HSplit(
+            [
+                Label(text=HTML('<b>Sign Up</b>'), dont_extend_height=True),
+                username_textfield,
+                name_textfield,
+                pin_textfield,
+                DynamicContainer(
+                    get_container=lambda: Label(
+                        text=error_msg or '',
+                        dont_extend_height=True,
+                        style=danger_text_color
+                    )
+                )
+            ],
+            padding=Dimension(preferred=1, max=1)
+        ),
+        buttons=[back_button, ok_button, exit_button],
         with_background=True
     )
 
@@ -377,11 +581,6 @@ def LoginScreen(controller):
 
 
 def MenuScreen(controller):
-    def on_check_balance_click():
-        # Go to Check Balance screen.
-        new_state = CheckBalanceScreenState(session=controller.state.session)
-        controller.set_state(new_state)
-
     def on_deposit_click():
         # Go to Deposit screen.
         new_state = DepositScreenState(session=controller.state.session)
@@ -398,7 +597,6 @@ def MenuScreen(controller):
         controller.set_state(new_state)
 
     buttons = [
-        Button('Check Balance', handler=on_check_balance_click),
         Button('Deposit', handler=on_deposit_click),
         Button('Withdraw', handler=on_withdraw_click),
         Button('My Account', handler=on_account_click),
@@ -415,7 +613,7 @@ def MenuScreen(controller):
                 key_bindings=keybindings
             )
         ]),
-        style='bg:#88ff88 #000000'
+        style=f'bg:{bg_color} {text_color}'
     )
 
     account = controller.state.session.db.get_account_from_account_id(
@@ -430,131 +628,287 @@ def MenuScreen(controller):
     return ToolbarFrame(body=body, toolbar_content=toolbar_content, position=ToolbarFrameToolbarPosition.TOP)
 
 
-def CheckBalanceScreen(controller):
-    body = Box(
-        TextArea(
-            "Check Balance",
-            focusable=False,
-            scrollbar=True
-        ),
-        padding=0,
-        padding_left=1,
-        padding_right=1,
-        style='bg:#88ff88 #000000'
-    )
-
-    def on_back_click():
-        # Go to menu screen.
-        new_state = MenuScreenState(session=controller.state.session)
-        controller.set_state(new_state)
-
-    buttons = [
-        Button('back', handler=on_back_click),
-        Button('quit', handler=exit_current_app)
-    ]
-
-    keybindings = create_horizontal_button_list_keybindings(buttons)
-
-    toolbar_content = Box(
-        VSplit(
-            children=buttons,
-            align=HorizontalAlign.CENTER,
-            padding=Dimension(preferred=10, max=10),
-            key_bindings=keybindings
-        ),
-        height=1
-    )
-
-    return ToolbarFrame(body, toolbar_content, position=ToolbarFrameToolbarPosition.BOTTOM)
+def parse_amount_input(amount):
+    amount_split = amount.split(".")
+    dollars = int(amount_split[0] or 0)
+    cents = 0
+    if len(amount_split) == 2:
+        cents = int(amount_split[1] or 0)
+        if len(amount_split[1]) == 1:
+            cents *= 10
+    return dollars * 100 + cents
 
 
 def DepositScreen(controller):
-    body = Box(
-        TextArea(
-            "Deposit",
-            focusable=False,
-            scrollbar=True
-        ),
-        padding=0,
-        padding_left=1,
-        padding_right=1,
-        style='bg:#88ff88 #000000'
-    )
+    account = controller.state.session.db.get_account_from_account_id(
+        controller.state.session.account_id)
+    error_msg = None
 
-    def on_back_click():
-        # Go to menu screen.
+    def set_error_msg(msg):
+        nonlocal error_msg
+        error_msg = msg
+        get_app().invalidate()
+
+    amount_re = re.compile(r"^(\d+(\.\d{0,2})?|\.\d{1,2})$")
+
+    def check_amount_valid(amount):
+        if not amount_re.search(amount):
+            get_app().layout.focus(amount_textfield)
+            set_error_msg("Invalid amount.")
+            return False
+        cents = parse_amount_input(amount)
+        if cents == 0:
+            get_app().layout.focus(amount_textfield)
+            set_error_msg("Cannot deposit $0.00.")
+            return False
+        if cents % 5 != 0:
+            get_app().layout.focus(amount_textfield)
+            set_error_msg("Cannot deposit an odd number of cents.")
+            return False
+        return True
+
+    def on_amount_textfield_accept(_buffer):
+        if check_amount_valid(amount_textfield.text):
+            set_error_msg(None)
+            get_app().layout.focus(ok_button)
+        return True  # Keeps text.
+
+    def on_ok_clicked():
+        if not check_amount_valid(amount_textfield.text):
+            return
+        set_error_msg(None)
+        cents = parse_amount_input(amount_textfield.text)
+        controller.state.session.db.set_account_balance(
+            controller.state.session.account_id, account['balance'] + cents)
+        controller.set_state(MenuScreenState(session=controller.state.session))
+
+    def on_back_clicked():
         new_state = MenuScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
-    buttons = [
-        Button('back', handler=on_back_click),
-        Button('quit', handler=exit_current_app)
-    ]
-
-    keybindings = create_horizontal_button_list_keybindings(buttons)
-
-    toolbar_content = Box(
-        VSplit(
-            children=buttons,
-            align=HorizontalAlign.CENTER,
-            padding=Dimension(preferred=10, max=10),
-            key_bindings=keybindings
-        ),
-        height=1
+    back_button = Button(text="Cancel", handler=on_back_clicked)
+    ok_button = Button(text="Deposit Amount", handler=on_ok_clicked)
+    exit_button = Button(text="Quit", handler=exit_current_app)
+    amount_textfield = TextArea(
+        multiline=False,
+        wrap_lines=False,
+        accept_handler=on_amount_textfield_accept,
+        get_line_prefix=lambda _, __: '[amount]: $',
+        style=f'bg:{dialog_bg_color} {dialog_text_color} italic'
     )
 
-    return ToolbarFrame(body, toolbar_content, position=ToolbarFrameToolbarPosition.BOTTOM)
+    dialog = Dialog(
+        title=f"SMH Bank | {account['username']}",
+        body=HSplit(
+            [
+                Label(text=HTML('<b>Deposit</b>'),
+                      dont_extend_height=True),
+                amount_textfield,
+                DynamicContainer(
+                    get_container=lambda: Label(
+                        text=error_msg or '',
+                        dont_extend_height=True,
+                        style=danger_text_color
+                    )
+                )
+            ],
+            padding=Dimension(preferred=1, max=1)
+        ),
+        buttons=[back_button, ok_button, exit_button],
+        with_background=True
+    )
+
+    return dialog
 
 
 def WithdrawScreen(controller):
-    body = Box(
-        TextArea(
-            "Withdraw",
-            focusable=False,
-            scrollbar=True
-        ),
-        padding=0,
-        padding_left=1,
-        padding_right=1,
-        style='bg:#88ff88 #000000'
-    )
+    account = controller.state.session.db.get_account_from_account_id(
+        controller.state.session.account_id)
+    error_msg = None
 
-    def on_back_click():
-        # Go to menu screen.
+    def set_error_msg(msg):
+        nonlocal error_msg
+        error_msg = msg
+        get_app().invalidate()
+
+    amount_re = re.compile(r"^(\d+(\.\d{0,2})?|\.\d{1,2})$")
+
+    def check_amount_valid(amount):
+        if not amount_re.search(amount):
+            get_app().layout.focus(amount_textfield)
+            set_error_msg("Invalid amount.")
+            return False
+        cents = parse_amount_input(amount)
+        if cents == 0:
+            get_app().layout.focus(amount_textfield)
+            set_error_msg("Cannot withdraw $0.00.")
+            return False
+        if cents % 5 != 0:
+            get_app().layout.focus(amount_textfield)
+            set_error_msg("Cannot withdraw an odd number of cents.")
+            return False
+        if cents > account['balance']:
+            get_app().layout.focus(amount_textfield)
+            set_error_msg("Insufficient funds.")
+            return False
+        return True
+
+    def on_amount_textfield_accept(_buffer):
+        if check_amount_valid(amount_textfield.text):
+            set_error_msg(None)
+            get_app().layout.focus(ok_button)
+        return True  # Keeps text.
+
+    def on_ok_clicked():
+        if not check_amount_valid(amount_textfield.text):
+            return
+        set_error_msg(None)
+        cents = parse_amount_input(amount_textfield.text)
+        controller.state.session.db.set_account_balance(
+            controller.state.session.account_id, account['balance'] - cents)
+        controller.set_state(MenuScreenState(session=controller.state.session))
+
+    def on_back_clicked():
         new_state = MenuScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
-    buttons = [
-        Button('back', handler=on_back_click),
-        Button('quit', handler=exit_current_app)
-    ]
-
-    keybindings = create_horizontal_button_list_keybindings(buttons)
-
-    toolbar_content = Box(
-        VSplit(
-            children=buttons,
-            align=HorizontalAlign.CENTER,
-            padding=Dimension(preferred=10, max=10),
-            key_bindings=keybindings
-        ),
-        height=1
+    back_button = Button(text="Cancel", handler=on_back_clicked)
+    ok_button = Button(text="Withdraw Amount", handler=on_ok_clicked)
+    exit_button = Button(text="Quit", handler=exit_current_app)
+    amount_textfield = TextArea(
+        multiline=False,
+        wrap_lines=False,
+        accept_handler=on_amount_textfield_accept,
+        get_line_prefix=lambda _, __: '[amount]: $',
+        style=f'bg:{dialog_bg_color} {dialog_text_color} italic'
     )
 
-    return ToolbarFrame(body, toolbar_content, position=ToolbarFrameToolbarPosition.BOTTOM)
+    dialog = Dialog(
+        title=f"SMH Bank | {account['username']}",
+        body=HSplit(
+            [
+                Label(text=HTML('<b>Withdraw</b>'),
+                      dont_extend_height=True),
+                amount_textfield,
+                DynamicContainer(
+                    get_container=lambda: Label(
+                        text=error_msg or '',
+                        dont_extend_height=True,
+                        style=danger_text_color
+                    )
+                )
+            ],
+            padding=Dimension(preferred=1, max=1)
+        ),
+        buttons=[back_button, ok_button, exit_button],
+        with_background=True
+    )
+
+    return dialog
+
+
+def prettydate(d):
+    # https://stackoverflow.com/questions/410221/natural-relative-days-in-python
+    diff = datetime.now() - d
+    s = diff.seconds
+    if diff.days > 7 or diff.days < 0:
+        return d.strftime('%d %b %y')
+    elif diff.days == 1:
+        return '1 day ago'
+    elif diff.days > 1:
+        return '{} days ago'.format(diff.days)
+    elif s <= 1:
+        return 'just now'
+    elif s < 60:
+        return '{} seconds ago'.format(s)
+    elif s < 120:
+        return '1 minute ago'
+    elif s < 3600:
+        return '{} minutes ago'.format(int(s/60))
+    elif s < 7200:
+        return '1 hour ago'
+    else:
+        return '{} hours ago'.format(int(s/3600))
 
 
 def AccountScreen(controller):
+    body_keybindings = KeyBindings()
+
+    @body_keybindings.add('escape')
+    def _body_on_key_esc(_):
+        app = get_app()
+        first_toolbar_button = toolbar_buttons[0]
+        app.layout.focus(first_toolbar_button)
+
+    account = controller.state.session.db.get_account_from_account_id(
+        controller.state.session.account_id)
+
+    def on_change_username_click():
+        new_state = ChangeUsernameScreenState(session=controller.state.session)
+        controller.set_state(new_state)
+
+    def on_change_name_click():
+        new_state = ChangeNameScreenState(session=controller.state.session)
+        controller.set_state(new_state)
+
+    def on_change_pin_click():
+        new_state = ChangePinScreenState(session=controller.state.session)
+        controller.set_state(new_state)
+
+    def on_logout_click():
+        controller.set_state(LoginScreenState(
+            session=Session(db=controller.state.session.db)))
+
+    def on_delete_account_click():
+        new_state = DeleteAccount1ScreenState(session=controller.state.session)
+        controller.set_state(new_state)
+
+    body_buttons = [
+        Button('change', handler=on_change_username_click),
+        Button('change', handler=on_change_name_click),
+        Button('change', handler=on_change_pin_click),
+        Button("Logout", handler=on_logout_click)
+    ]
+    global global__default_target_focus
+    global__default_target_focus = body_buttons[0]
+
     body = Box(
-        TextArea(
-            "Account",
-            focusable=False,
-            scrollbar=True
+        HSplit(
+            [
+                Label(text=HTML('<b><i>My Account</i></b>')),
+                Label(text=HTML(
+                    f"<i>Account created {prettydate(account['created_at'])}</i>")),
+                Label(text=HTML(
+                    f"<i>Your account's balance is {format_balance(account['balance'])}</i>")),
+                VSplit([
+                    Label(
+                        text=f"Username: {account['username']}"),
+                    body_buttons[0],
+                ]),
+                VSplit([
+                    Label(text=f"Full Name: {account['name']}"),
+                    body_buttons[1],
+                ]),
+                VSplit([
+                    Label(text="Pin: ****"),
+                    body_buttons[2],
+                ]),
+                VSplit(
+                    [body_buttons[3]],
+                    align=HorizontalAlign.CENTER
+                ),
+                VSplit(
+                    [Button("Click to Delete Account",
+                            handler=on_delete_account_click,
+                            class_="danger_button")],
+                    align=HorizontalAlign.CENTER
+                )
+            ],
+            key_bindings=merge_key_bindings([
+                body_keybindings, create_vertical_button_list_keybindings(body_buttons)]),
+            padding=Dimension(preferred=1, max=1)
         ),
-        padding=0,
-        padding_left=1,
-        padding_right=1,
-        style='bg:#88ff88 #000000'
+        style=f'bg:{bg_color} {text_color}'
     )
 
     def on_back_click():
@@ -562,24 +916,368 @@ def AccountScreen(controller):
         new_state = MenuScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
-    buttons = [
-        Button('back', handler=on_back_click),
-        Button('quit', handler=exit_current_app)
+    toolbar_buttons = [
+        Button('back', handler=on_back_click, class_='toolbar_button'),
+        Button('quit', handler=exit_current_app, class_='toolbar_button')
     ]
-
-    keybindings = create_horizontal_button_list_keybindings(buttons)
 
     toolbar_content = Box(
         VSplit(
-            children=buttons,
+            children=toolbar_buttons,
             align=HorizontalAlign.CENTER,
             padding=Dimension(preferred=10, max=10),
-            key_bindings=keybindings
+            key_bindings=create_horizontal_button_list_keybindings(
+                toolbar_buttons)
         ),
         height=1
     )
 
-    return ToolbarFrame(body, toolbar_content, position=ToolbarFrameToolbarPosition.BOTTOM)
+    return ToolbarFrame(body, toolbar_content, position=ToolbarFrameToolbarPosition.TOP)
+
+
+def ChangeUsernameScreen(controller):
+    account = controller.state.session.db.get_account_from_account_id(
+        controller.state.session.account_id)
+    error_msg = None
+
+    def set_error_msg(msg):
+        nonlocal error_msg
+        error_msg = msg
+        get_app().invalidate()
+
+    def check_username_valid(username):
+        if len(username.strip()) == 0:
+            get_app().layout.focus(username_textfield)
+            set_error_msg("Username field is empty")
+            return False
+        if username == account['username']:
+            get_app().layout.focus(username_textfield)
+            set_error_msg("That is your current username")
+            return False
+        if not controller.state.session.db.get_account_from_username(username.strip().lower()):
+            if not is_alnum_and_starts_with_al(username.strip()):
+                get_app().layout.focus(username_textfield)
+                set_error_msg(
+                    "Username must start with a letter and only contain letters/numbers")
+                return False
+            return True
+        get_app().layout.focus(username_textfield)
+        set_error_msg("Username is already taken")
+        return False
+
+    def on_username_textfield_accept(_buffer):
+        if check_username_valid(username_textfield.text):
+            set_error_msg(None)
+            get_app().layout.focus(ok_button)
+        return True  # Keeps text.
+
+    def on_ok_clicked():
+        username = username_textfield.text.strip().lower()
+        if not check_username_valid(username):
+            return
+        set_error_msg(None)
+        controller.state.session.db.change_account_username(
+            controller.state.session.account_id, username)
+        controller.set_state(MenuScreenState(session=controller.state.session))
+
+    def on_back_clicked():
+        new_state = AccountScreenState(session=controller.state.session)
+        controller.set_state(new_state)
+
+    back_button = Button(text="Cancel", handler=on_back_clicked)
+    ok_button = Button(text="Change Username", handler=on_ok_clicked)
+    exit_button = Button(text="Quit", handler=exit_current_app)
+    username_textfield = TextArea(
+        multiline=False,
+        wrap_lines=False,
+        accept_handler=on_username_textfield_accept,
+        get_line_prefix=lambda _, __: '[new username]: ',
+        style=f'bg:{dialog_bg_color} {dialog_text_color} italic'
+    )
+
+    dialog = Dialog(
+        title=f"SMH Bank | {account['username']}",
+        body=HSplit(
+            [
+                Label(text=HTML('<b>Change Username</b>'),
+                      dont_extend_height=True),
+                username_textfield,
+                DynamicContainer(
+                    get_container=lambda: Label(
+                        text=error_msg or '',
+                        dont_extend_height=True,
+                        style=danger_text_color
+                    )
+                )
+            ],
+            padding=Dimension(preferred=1, max=1)
+        ),
+        buttons=[back_button, ok_button, exit_button],
+        with_background=True
+    )
+
+    return dialog
+
+
+def ChangeNameScreen(controller):
+    account = controller.state.session.db.get_account_from_account_id(
+        controller.state.session.account_id)
+    error_msg = None
+
+    def set_error_msg(msg):
+        nonlocal error_msg
+        error_msg = msg
+        get_app().invalidate()
+
+    def check_name_valid(name):
+        if len(name.strip()) > 0:
+            if name == account['name']:
+                get_app().layout.focus(name_textfield)
+                set_error_msg("That is your current name")
+                return False
+            return True
+        get_app().layout.focus(name_textfield)
+        set_error_msg("Name field is empty")
+        return False
+
+    def on_name_textfield_accept(_buffer):
+        if check_name_valid(name_textfield.text):
+            set_error_msg(None)
+            get_app().layout.focus(ok_button)
+        return True  # Keeps text.
+
+    def on_ok_clicked():
+        name = name_textfield.text.strip()
+        if not check_name_valid(name):
+            return
+        set_error_msg(None)
+        controller.state.session.db.change_account_name(
+            controller.state.session.account_id, name)
+        controller.set_state(MenuScreenState(session=controller.state.session))
+
+    def on_back_clicked():
+        new_state = AccountScreenState(session=controller.state.session)
+        controller.set_state(new_state)
+
+    back_button = Button(text="Cancel", handler=on_back_clicked)
+    ok_button = Button(text="Change Name", handler=on_ok_clicked)
+    exit_button = Button(text="Quit", handler=exit_current_app)
+    name_textfield = TextArea(
+        multiline=False,
+        wrap_lines=False,
+        accept_handler=on_name_textfield_accept,
+        get_line_prefix=lambda _, __: '[new full name]: ',
+        style=f'bg:{dialog_bg_color} {dialog_text_color} italic'
+    )
+
+    dialog = Dialog(
+        title=f"SMH Bank | {account['username']}",
+        body=HSplit(
+            [
+                Label(text=HTML('<b>Change Name</b>'),
+                      dont_extend_height=True),
+                name_textfield,
+                DynamicContainer(
+                    get_container=lambda: Label(
+                        text=error_msg or '',
+                        dont_extend_height=True,
+                        style=danger_text_color
+                    )
+                )
+            ],
+            padding=Dimension(preferred=1, max=1)
+        ),
+        buttons=[back_button, ok_button, exit_button],
+        with_background=True
+    )
+
+    return dialog
+
+
+def ChangePinScreen(controller):
+    account = controller.state.session.db.get_account_from_account_id(
+        controller.state.session.account_id)
+    error_msg = None
+
+    def set_error_msg(msg):
+        nonlocal error_msg
+        error_msg = msg
+        get_app().invalidate()
+
+    def check_pin_valid(pin):
+        if len(pin) == 4 and pin.isdecimal():
+            return True
+        get_app().layout.focus(pin_textfield)
+        set_error_msg("Please enter 4 digits for Pin field")
+        return False
+
+    def on_pin_textfield_accept(_buffer):
+        if check_pin_valid(pin_textfield.text):
+            set_error_msg(None)
+            get_app().layout.focus(ok_button)
+        return True  # Keeps text.
+
+    def on_ok_clicked():
+        pin = pin_textfield.text
+        if not check_pin_valid(pin):
+            return
+        set_error_msg(None)
+        controller.state.session.db.change_account_pin(
+            controller.state.session.account_id, pin)
+        controller.set_state(MenuScreenState(session=controller.state.session))
+
+    def on_back_clicked():
+        new_state = AccountScreenState(session=controller.state.session)
+        controller.set_state(new_state)
+
+    back_button = Button(text="Cancel", handler=on_back_clicked)
+    ok_button = Button(text="Change Pin", handler=on_ok_clicked)
+    exit_button = Button(text="Quit", handler=exit_current_app)
+    pin_textfield = TextArea(
+        multiline=False,
+        wrap_lines=False,
+        password=True,
+        accept_handler=on_pin_textfield_accept,
+        get_line_prefix=lambda _, __: '[new pin]: ',
+        style=f'bg:{dialog_bg_color} {dialog_text_color} italic'
+    )
+
+    dialog = Dialog(
+        title=f"SMH Bank | {account['username']}",
+        body=HSplit(
+            [
+                Label(text=HTML('<b>Change Pin</b>'),
+                      dont_extend_height=True),
+                pin_textfield,
+                DynamicContainer(
+                    get_container=lambda: Label(
+                        text=error_msg or '',
+                        dont_extend_height=True,
+                        style=danger_text_color
+                    )
+                )
+            ],
+            padding=Dimension(preferred=1, max=1)
+        ),
+        buttons=[back_button, ok_button, exit_button],
+        with_background=True
+    )
+
+    return dialog
+
+
+def DeleteAccount1Screen(controller):
+    account = controller.state.session.db.get_account_from_account_id(
+        controller.state.session.account_id)
+
+    def on_ok_clicked():
+        controller.set_state(DeleteAccount2ScreenState(
+            session=controller.state.session))
+
+    def on_back_clicked():
+        new_state = AccountScreenState(session=controller.state.session)
+        controller.set_state(new_state)
+
+    back_button = Button(text="Cancel", handler=on_back_clicked)
+    ok_button = Button(text="Delete Account",
+                       handler=on_ok_clicked, class_="dialog_danger_button")
+    exit_button = Button(text="Quit", handler=exit_current_app)
+
+    dialog = Dialog(
+        title=f"SMH Bank | {account['username']}",
+        body=HSplit(
+            [
+                Label(text=HTML('<b>Delete Account</b>'),
+                      dont_extend_height=True),
+                TextArea(
+                    "Are you sure you want to delete your account? This action is not reversible and you will permanently lose all the money in your account.",
+                    focusable=False,
+                    scrollbar=True,
+                    style=f"bg:{dialog_bg_color} {dialog_text_color}"
+                )
+            ],
+            padding=Dimension(preferred=1, max=1)
+        ),
+        buttons=[back_button, ok_button, exit_button],
+        with_background=True
+    )
+
+    return dialog
+
+
+def DeleteAccount2Screen(controller):
+    account = controller.state.session.db.get_account_from_account_id(
+        controller.state.session.account_id)
+    error_msg = None
+
+    def set_error_msg(msg):
+        nonlocal error_msg
+        error_msg = msg
+        get_app().invalidate()
+
+    def check_username_valid(username):
+        if username == account['username']:
+            return True
+        get_app().layout.focus(username_textfield)
+        set_error_msg("That is not your username")
+        return False
+
+    def on_username_textfield_accept(_buffer):
+        if check_username_valid(username_textfield.text):
+            set_error_msg(None)
+            get_app().layout.focus(ok_button)
+        return True  # Keeps text.
+
+    def on_ok_clicked():
+        if not check_username_valid(username_textfield.text):
+            return
+        controller.state.session.db.delete_account(
+            controller.state.session.account_id)
+        controller.set_state(LoginScreenState(
+            session=Session(db=controller.state.session.db)))
+
+    def on_back_clicked():
+        new_state = AccountScreenState(session=controller.state.session)
+        controller.set_state(new_state)
+
+    back_button = Button(text="Cancel", handler=on_back_clicked)
+    ok_button = Button(text="Delete Account",
+                       handler=on_ok_clicked, class_="dialog_danger_button")
+    exit_button = Button(text="Quit", handler=exit_current_app)
+    username_textfield = TextArea(
+        multiline=False,
+        wrap_lines=False,
+        accept_handler=on_username_textfield_accept,
+        get_line_prefix=lambda _, __: '[username]: ',
+        style=f'bg:{dialog_bg_color} {dialog_text_color} italic'
+    )
+
+    dialog = Dialog(
+        title=f"SMH Bank | {account['username']}",
+        body=HSplit(
+            [
+                Label(text=HTML('<b>Delete Account</b>'),
+                      dont_extend_height=True),
+                Label(
+                    "Confirm your username to delete your account.",
+                    dont_extend_height=True
+                ),
+                username_textfield,
+                DynamicContainer(
+                    get_container=lambda: Label(
+                        text=error_msg or '',
+                        dont_extend_height=True,
+                        style=danger_text_color
+                    )
+                )
+            ],
+            padding=Dimension(preferred=1, max=1)
+        ),
+        buttons=[back_button, ok_button, exit_button],
+        with_background=True
+    )
+
+    return dialog
 
 
 def RootScreen(controller):
@@ -589,11 +1287,11 @@ def RootScreen(controller):
     if state.root_screen_type == RootScreenType.LOGIN:
         return LoginScreen(controller)
 
+    if state.root_screen_type == RootScreenType.SIGN_UP:
+        return SignUpScreen(controller)
+
     if state.root_screen_type == RootScreenType.MENU:
         return MenuScreen(controller)
-
-    if state.root_screen_type == RootScreenType.CHECK_BALANCE:
-        return CheckBalanceScreen(controller)
 
     if state.root_screen_type == RootScreenType.DEPOSIT:
         return DepositScreen(controller)
@@ -603,6 +1301,21 @@ def RootScreen(controller):
 
     if state.root_screen_type == RootScreenType.ACCOUNT:
         return AccountScreen(controller)
+
+    if state.root_screen_type == RootScreenType.CHANGE_USERNAME:
+        return ChangeUsernameScreen(controller)
+
+    if state.root_screen_type == RootScreenType.CHANGE_NAME:
+        return ChangeNameScreen(controller)
+
+    if state.root_screen_type == RootScreenType.CHANGE_PIN:
+        return ChangePinScreen(controller)
+
+    if state.root_screen_type == RootScreenType.DELETE_ACCOUNT_1:
+        return DeleteAccount1Screen(controller)
+
+    if state.root_screen_type == RootScreenType.DELETE_ACCOUNT_2:
+        return DeleteAccount2Screen(controller)
 
 
 class Controller:
@@ -624,13 +1337,22 @@ def RootController(root_state=LoginScreenState(session=Session(db=load_db()))):
     return Controller(root_state, RootScreen)
 
 
+bg_color = '#82aba4'
+dialog_bg_color = '#36213e'
+dialog_text_color = '#ffffff'
+text_color = '#ffffff'
+danger_text_color = '#dd0000'
 root_style = Style.from_dict({
-    'dialog': 'bg:#88ff88',
-    'dialog frame.label': 'bg:#000000 #00ff00',
-    'dialog.body': 'bg:#000000 #00ff00',
-    'dialog shadow': 'bg:#00aa00',
-    'button.focused': 'bg:#228822',
-    'dialog.body text-area last-line': 'nounderline'
+    'dialog': f'bg:{bg_color}',
+    'dialog frame.label': f'bg:{dialog_bg_color} {dialog_text_color}',
+    'dialog.body': f'bg:{dialog_bg_color} {dialog_text_color}',
+    'dialog shadow': 'bg:#63968d',
+    'button.focused': f'bg:{text_color} {bg_color}',
+    'toolbar_button.focused': f'bg:{bg_color} {text_color}',
+    'danger_button': f'bg:{bg_color} {danger_text_color}',
+    'danger_button.focused': f'bg:{danger_text_color} {text_color}',
+    'dialog_danger_button': f'bg:{dialog_bg_color} {danger_text_color}',
+    'dialog_danger_button.focused': f'bg:{danger_text_color} {text_color}',
 })
 
 
@@ -684,7 +1406,7 @@ def build_application():
     keybindings.add('tab')(focus_next)
     keybindings.add('s-tab')(focus_previous)
 
-    @keybindings.add('c-c')
+    @ keybindings.add('c-c')
     def _on_key_ctrl_c(_):
         exit_current_app()
 
