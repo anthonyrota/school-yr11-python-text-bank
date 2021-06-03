@@ -654,16 +654,16 @@ def DepositScreen(controller):
     def check_amount_valid(amount):
         if not amount_re.search(amount):
             get_app().layout.focus(amount_textfield)
-            set_error_msg("Invalid amount.")
+            set_error_msg("Invalid amount")
             return False
         cents = parse_amount_input(amount)
         if cents == 0:
             get_app().layout.focus(amount_textfield)
-            set_error_msg("Cannot deposit $0.00.")
+            set_error_msg("Cannot deposit $0.00")
             return False
         if cents % 5 != 0:
             get_app().layout.focus(amount_textfield)
-            set_error_msg("Cannot deposit an odd number of cents.")
+            set_error_msg("That is not a valid amount of cents")
             return False
         return True
 
@@ -736,20 +736,24 @@ def WithdrawScreen(controller):
     def check_amount_valid(amount):
         if not amount_re.search(amount):
             get_app().layout.focus(amount_textfield)
-            set_error_msg("Invalid amount.")
+            set_error_msg("Invalid amount")
             return False
         cents = parse_amount_input(amount)
         if cents == 0:
             get_app().layout.focus(amount_textfield)
-            set_error_msg("Cannot withdraw $0.00.")
+            set_error_msg("Cannot withdraw $0.00")
             return False
         if cents % 5 != 0:
             get_app().layout.focus(amount_textfield)
-            set_error_msg("Cannot withdraw an odd number of cents.")
+            set_error_msg("That is not a valid amount of cents")
+            return False
+        if cents % 2000 != 0:
+            get_app().layout.focus(amount_textfield)
+            set_error_msg("Can only withdraw $20 bills")
             return False
         if cents > account['balance']:
             get_app().layout.focus(amount_textfield)
-            set_error_msg("Insufficient funds.")
+            set_error_msg("Insufficient funds")
             return False
         return True
 
@@ -1190,7 +1194,7 @@ def DeleteAccount1Screen(controller):
                 Label(text=HTML('<b>Delete Account</b>'),
                       dont_extend_height=True),
                 TextArea(
-                    "Are you sure you want to delete your account? This action is not reversible and you will permanently lose all the money in your account.",
+                    "Are you sure you want to delete your account? This action is not reversible and you will permanently lose all the money in your account",
                     focusable=False,
                     scrollbar=True,
                     style=f"bg:{dialog_bg_color} {dialog_text_color}"
@@ -1259,7 +1263,7 @@ def DeleteAccount2Screen(controller):
                 Label(text=HTML('<b>Delete Account</b>'),
                       dont_extend_height=True),
                 Label(
-                    "Confirm your username to delete your account.",
+                    "Confirm your username to delete your account",
                     dont_extend_height=True
                 ),
                 username_textfield,
