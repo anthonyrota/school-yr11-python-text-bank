@@ -31,17 +31,14 @@ class Button:
         self,
         text: str,
         handler: Optional[Callable[[], None]] = None,
-        width: int = None,
+        pad_width: int = 0,
         focusable: bool = True,
         class_=None
     ) -> None:
         self.text = f'<{text}>'
         self.handler = handler
-        self.width = width
+        self.width = max(12, len(self.text)+4+pad_width)
         self.focusable = focusable
-
-        if width is None:
-            self.width = max(12, len(self.text)+2+4)
 
         self.control = FormattedTextControl(
             self._get_text_fragments,

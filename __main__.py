@@ -2,6 +2,7 @@ from enum import Enum, auto
 from platform import system
 from uuid import uuid4
 from datetime import datetime
+import tableprint as tp
 import os
 import hashlib
 import hmac
@@ -58,6 +59,7 @@ class RootScreenType(Enum):
     DEPOSIT = auto()
     WITHDRAW = auto()
     ACCOUNT = auto()
+    TRANSACTIONS = auto()
     CHANGE_USERNAME = auto()
     CHANGE_NAME = auto()
     CHANGE_PIN = auto()
@@ -96,6 +98,20 @@ class WithdrawScreenState(ScreenState):
 
 class AccountScreenState(ScreenState):
     root_screen_type = RootScreenType.ACCOUNT
+
+
+class TransactionsScreenFilter(Enum):
+    DEPOSIT_ONLY = auto()
+    WITHDRAW_ONLY = auto()
+    BOTH = auto()
+
+
+class TransactionsScreenState(ScreenState):
+    root_screen_type = RootScreenType.TRANSACTIONS
+
+    def __init__(self, session, filter):
+        super().__init__(session)
+        self.filter = filter
 
 
 class ChangeUsernameScreenState(ScreenState):
@@ -171,6 +187,11 @@ def format_balance(balance):
     return f'${dollars}.{cents}'
 
 
+class TransactionType(Enum):
+    DEPOSIT = 'd'
+    WITHDRAW = 'w'
+
+
 class DB:
     def __init__(self, data, insecure_txt_db):
         self._data = data
@@ -187,6 +208,11 @@ class DB:
                 "pw_hash": decode_bytes(account['pin'][1])
             },
             "balance": int(account['balance']),
+            "transactions": [{
+                "type": TransactionType(transaction["type"]),
+                "value": transaction["value"],
+                "timestamp": datetime.fromtimestamp(transaction["timestamp"])
+            } for transaction in account['transactions']],
             "created_at": datetime.fromtimestamp(account['created_at'])
         }
 
@@ -205,6 +231,7 @@ class DB:
             'name': name,
             'pin': [encode_bytes(salt), encode_bytes(pw_hash)],
             'balance': 0,
+            'transactions': [],
             'created_at': datetime.now().timestamp()
         }
         self._data['account_username_to_account_id'][username] = account_id
@@ -241,6 +268,14 @@ class DB:
         self._data['accounts'][account_id]['balance'] = new_balance
         save_db(self)
 
+    def record_account_transaction(self, account_id, type, value):
+        self._data['accounts'][account_id]['transactions'].append({
+            'type': type.value,
+            'value': value,
+            'timestamp': datetime.now().timestamp()
+        })
+        save_db(self)
+
     def json(self):
         return self._data
 
@@ -249,15 +284,16 @@ class DB:
             self._insecure_text_db, separators=(',', ':'))
         table = []
         table.append(['account_id', 'created_at',
-                      'username', 'name', 'pin', 'balance'])
+                      'username', 'name', 'pin', 'balance', 'transactions'])
         for account_id, account_data in self._data['accounts'].items():
             created_at = str(account_data['created_at'])
             username = account_data['username']
             name = account_data['name']
             pin = str(self._insecure_text_db[account_id])
             balance = format_balance(account_data['balance'])
+            transactions = str(len(account_data['transactions']))
             table.append(
-                [account_id, created_at, username, name, pin, balance])
+                [account_id, created_at, username, name, pin, balance, transactions])
         return f'{insecure_txt_db_json}\n\nIF YOU ARE NOT MR. DUNNE CLOSE THIS FILE IMMEDIATELY😡😡😡😡😡!!!!!!!!! YOU ARE INTELLECTUALLY TRESPASSING!!1!!1!\n{table_to_txt(table)}\n'
 
 
@@ -680,6 +716,8 @@ def DepositScreen(controller):
         cents = parse_amount_input(amount_textfield.text)
         controller.state.session.db.set_account_balance(
             controller.state.session.account_id, account['balance'] + cents)
+        controller.state.session.db.record_account_transaction(
+            controller.state.session.account_id, TransactionType.DEPOSIT, cents)
         controller.set_state(MenuScreenState(session=controller.state.session))
 
     def on_back_clicked():
@@ -770,6 +808,8 @@ def WithdrawScreen(controller):
         cents = parse_amount_input(amount_textfield.text)
         controller.state.session.db.set_account_balance(
             controller.state.session.account_id, account['balance'] - cents)
+        controller.state.session.db.record_account_transaction(
+            controller.state.session.account_id, TransactionType.WITHDRAW, cents)
         controller.set_state(MenuScreenState(session=controller.state.session))
 
     def on_back_clicked():
@@ -847,6 +887,11 @@ def AccountScreen(controller):
     account = controller.state.session.db.get_account_from_account_id(
         controller.state.session.account_id)
 
+    def on_view_transactions_click():
+        new_state = TransactionsScreenState(
+            session=controller.state.session, filter=TransactionsScreenFilter.BOTH)
+        controller.set_state(new_state)
+
     def on_change_username_click():
         new_state = ChangeUsernameScreenState(session=controller.state.session)
         controller.set_state(new_state)
@@ -868,11 +913,13 @@ def AccountScreen(controller):
         controller.set_state(new_state)
 
     body_buttons = [
+        Button('view', pad_width=2, handler=on_view_transactions_click),
         Button('change', handler=on_change_username_click),
         Button('change', handler=on_change_name_click),
         Button('change', handler=on_change_pin_click),
         Button("Logout", handler=on_logout_click)
     ]
+    body_buttons_iter = iter(body_buttons)
     global global__default_target_focus
     global__default_target_focus = body_buttons[0]
 
@@ -886,19 +933,24 @@ def AccountScreen(controller):
                     f"<i>Your account's balance is {format_balance(account['balance'])}</i>")),
                 VSplit([
                     Label(
+                        text=f"Transactions: {len(account['transactions'])}"),
+                    next(body_buttons_iter),
+                ]),
+                VSplit([
+                    Label(
                         text=f"Username: {account['username']}"),
-                    body_buttons[0],
+                    next(body_buttons_iter),
                 ]),
                 VSplit([
                     Label(text=f"Full Name: {account['name']}"),
-                    body_buttons[1],
+                    next(body_buttons_iter),
                 ]),
                 VSplit([
                     Label(text="Pin: ****"),
-                    body_buttons[2],
+                    next(body_buttons_iter),
                 ]),
                 VSplit(
-                    [body_buttons[3]],
+                    [next(body_buttons_iter)],
                     align=HorizontalAlign.CENTER
                 ),
                 VSplit(
@@ -913,6 +965,114 @@ def AccountScreen(controller):
             padding=Dimension(preferred=1, max=1)
         ),
         style=f'bg:{bg_color} {text_color}'
+    )
+
+    def on_back_click():
+        # Go to menu screen.
+        new_state = MenuScreenState(session=controller.state.session)
+        controller.set_state(new_state)
+
+    toolbar_buttons = [
+        Button('back', handler=on_back_click, class_='toolbar_button'),
+        Button('quit', handler=exit_current_app, class_='toolbar_button')
+    ]
+
+    toolbar_content = Box(
+        VSplit(
+            children=toolbar_buttons,
+            align=HorizontalAlign.CENTER,
+            padding=Dimension(preferred=10, max=10),
+            key_bindings=create_horizontal_button_list_keybindings(
+                toolbar_buttons)
+        ),
+        height=1
+    )
+
+    return ToolbarFrame(body, toolbar_content, position=ToolbarFrameToolbarPosition.TOP)
+
+
+class TablePrintOut:
+    txt = ''
+
+    def write(self, txt):
+        self.txt += txt
+
+    def flush(self):
+        pass
+
+
+def TransactionsScreen(controller):
+    body_keybindings = KeyBindings()
+
+    @body_keybindings.add('escape')
+    def _body_on_key_esc(_):
+        app = get_app()
+        first_toolbar_button = toolbar_buttons[0]
+        app.layout.focus(first_toolbar_button)
+
+    account = controller.state.session.db.get_account_from_account_id(
+        controller.state.session.account_id)
+
+    def filter_deposits():
+        controller.set_state(TransactionsScreenState(
+            session=controller.state.session, filter=TransactionsScreenFilter.DEPOSIT_ONLY))
+
+    def filter_withdrawals():
+        controller.set_state(TransactionsScreenState(
+            session=controller.state.session, filter=TransactionsScreenFilter.WITHDRAW_ONLY))
+
+    def filter_both():
+        controller.set_state(TransactionsScreenState(
+            session=controller.state.session, filter=TransactionsScreenFilter.BOTH))
+
+    body_buttons = [
+        Button('Deposits', handler=filter_deposits),
+        Button('Withdrawals', handler=filter_withdrawals),
+        Button('Both', handler=filter_both)
+    ]
+
+    table_rows = [
+        [
+            'DEPOSIT' if transaction['type'] == TransactionType.DEPOSIT else 'WITHDRAW',
+            format_balance(transaction['value']),
+            prettydate(transaction['timestamp'])
+        ] for transaction in account['transactions'][::-1] if (
+            True if controller.state.filter == TransactionsScreenFilter.BOTH else (
+                transaction['type'] == TransactionType.DEPOSIT
+                if controller.state.filter == TransactionsScreenFilter.DEPOSIT_ONLY
+                else transaction['type'] == TransactionType.WITHDRAW
+            )
+        )
+    ]
+    if len(table_rows) == 0:
+        table_txt = 'No transactions'
+    else:
+        table_out = TablePrintOut()
+        tp.table(table_rows, ['Type', 'Value', 'Time'],
+                 style='round', out=table_out)
+        table_txt = table_out.txt
+    body = Box(
+        HSplit(
+            [
+                VSplit(
+                    [Label(text=HTML('<b><i>Transactions  </i></b>'))] + body_buttons),
+                TextArea(table_txt, width=max(
+                    len(l) for l in table_txt.split('\n'))+3, focusable=False, scrollbar=True)
+            ],
+            align=VerticalAlign.TOP,
+            key_bindings=merge_key_bindings(
+                [body_keybindings, create_horizontal_button_list_keybindings(body_buttons)]),
+            padding=Dimension(preferred=1, max=1)
+        ),
+        padding_top=Dimension(preferred=1, max=1),
+        style=f'bg:{bg_color} {text_color}'
+    )
+
+    global global__default_target_focus
+    global__default_target_focus = (
+        body_buttons[0] if controller.state.filter == TransactionsScreenFilter.DEPOSIT_ONLY else (
+            body_buttons[1] if controller.state.filter == TransactionsScreenFilter.WITHDRAW_ONLY else body_buttons[2]
+        )
     )
 
     def on_back_click():
@@ -1305,6 +1465,9 @@ def RootScreen(controller):
 
     if state.root_screen_type == RootScreenType.ACCOUNT:
         return AccountScreen(controller)
+
+    if state.root_screen_type == RootScreenType.TRANSACTIONS:
+        return TransactionsScreen(controller)
 
     if state.root_screen_type == RootScreenType.CHANGE_USERNAME:
         return ChangeUsernameScreen(controller)
