@@ -1,0 +1,15 @@
+SMH BANK
+
+◢■■■■■■■■■■■■■■■■■■■■■■■◣
+        DATE  05/06/2021 
+        TIME    11:16 PM 
+ TRANSACTION     DEPOSIT 
+◥■■■■■■■■■■■■■■■■■■■■■■■◤
+
+Mr. Dunne
+◢■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■◣
+ DEPOSITED AMOUNT         $1000.00 
+  ACCOUNT BALANCE         $1000.00 
+◥■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■◤
+
+APPROVED

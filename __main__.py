@@ -4,6 +4,7 @@ from uuid import uuid4
 from datetime import datetime
 import tableprint as tp
 import os
+import pathlib
 import hashlib
 import hmac
 import json
@@ -187,6 +188,17 @@ def format_balance(balance):
     return f'${dollars}.{cents}'
 
 
+def delete_folder(pth):
+    p = pathlib.Path(pth)
+    # https://stackoverflow.com/questions/303200/how-do-i-remove-delete-a-folder-that-is-not-empty
+    for sub in p.iterdir():
+        if sub.is_dir():
+            delete_folder(sub)
+        else:
+            sub.unlink()
+    p.rmdir()
+
+
 class TransactionType(Enum):
     DEPOSIT = 'd'
     WITHDRAW = 'w'
@@ -237,6 +249,7 @@ class DB:
         self._data['account_username_to_account_id'][username] = account_id
         self._insecure_text_db[account_id] = pin
         save_db(self)
+        os.mkdir(f'receipts/{username}')
         return account_id
 
     def change_account_username(self, account_id, new_username):
@@ -245,6 +258,7 @@ class DB:
         self._data['account_username_to_account_id'].pop(old_username)
         self._data['account_username_to_account_id'][new_username] = account_id
         save_db(self)
+        os.rename(f'receipts/{old_username}', f'receipts/{new_username}')
 
     def change_account_name(self, account_id, new_name):
         self._data['accounts'][account_id]['name'] = new_name
@@ -263,18 +277,48 @@ class DB:
         self._data['account_username_to_account_id'].pop(username)
         self._insecure_text_db.pop(account_id)
         save_db(self)
+        delete_folder(f'receipts/{username}')
 
     def set_account_balance(self, account_id, new_balance):
         self._data['accounts'][account_id]['balance'] = new_balance
         save_db(self)
 
     def record_account_transaction(self, account_id, type, value):
+        date = datetime.now()
+        timestamp = date.timestamp()
         self._data['accounts'][account_id]['transactions'].append({
             'type': type.value,
             'value': value,
-            'timestamp': datetime.now().timestamp()
+            'timestamp': timestamp
         })
         save_db(self)
+        t = TablePrintOut()
+        tp.table([
+            ["DATE", date.strftime("%d/%m/%Y")],
+            ["TIME", date.strftime("%I:%M %p")],
+            ["TRANSACTION", "DEPOSIT" if type ==
+                TransactionType.DEPOSIT else "WITHDRAWAL"],
+        ], style="block", out=t)
+        receipt_info_table_txt = t.txt
+        t = TablePrintOut()
+        account = self.get_account_from_account_id(account_id)
+        tp.table([
+            [f"{'DEPOSITED' if type == TransactionType.DEPOSIT else 'DISPENSED'} AMOUNT",
+                format_balance(value)],
+            [f"ACCOUNT BALANCE", format_balance(account["balance"])]
+        ], style="block", out=t)
+        receipt_numbers_table_txt = t.txt
+        receipt_txt = '\n'.join([
+            "SMH BANK",
+            "",
+            receipt_info_table_txt,
+            account['name'],
+            receipt_numbers_table_txt,
+            "APPROVED",
+            ""
+        ])
+        with open(f"receipts/{account['username']}/{timestamp}.txt", "w") as file:
+            file.write(receipt_txt)
 
     def json(self):
         return self._data
@@ -1076,8 +1120,7 @@ def TransactionsScreen(controller):
     )
 
     def on_back_click():
-        # Go to menu screen.
-        new_state = MenuScreenState(session=controller.state.session)
+        new_state = AccountScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
     toolbar_buttons = [
