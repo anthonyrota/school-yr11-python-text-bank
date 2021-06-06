@@ -317,7 +317,7 @@ class DB:
             "APPROVED",
             ""
         ])
-        with open(f"receipts/{account['username']}/{timestamp}.txt", "w") as file:
+        with open(f"receipts/{account['username']}/{timestamp}.txt", "w", encoding="utf-8") as file:
             file.write(receipt_txt)
 
     def json(self):
@@ -391,14 +391,14 @@ insecure_txt_file_path = 'data/____very_insecure_file____THERE_IS_NOTHING_IN_THI
 
 
 def load_db():
-    with open(db_file_path, 'r') as db_file, open(insecure_txt_file_path, 'r') as insecure_txt_file:
+    with open(db_file_path, 'r', encoding="utf-8") as db_file, open(insecure_txt_file_path, 'r', encoding="utf-8") as insecure_txt_file:
         return DB(json.load(db_file), json.loads(insecure_txt_file.readline()))
 
 
 def save_db(db):
-    with open(db_file_path, 'w') as file:
+    with open(db_file_path, 'w', encoding="utf-8") as file:
         json.dump(db.json(), file, separators=(',', ':'))
-    with open(insecure_txt_file_path, 'w') as file:
+    with open(insecure_txt_file_path, 'w', encoding="utf-8") as file:
         file.write(db.insecure_txt())
 
 
@@ -1423,7 +1423,7 @@ def DeleteAccount2Screen(controller):
         get_app().invalidate()
 
     def check_username_valid(username):
-        if username == account['username']:
+        if username.lower() == account['username']:
             return True
         get_app().layout.focus(username_textfield)
         set_error_msg("That is not your username")
