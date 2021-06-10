@@ -2,6 +2,7 @@ from enum import Enum, auto
 from platform import system
 from uuid import uuid4
 from datetime import datetime
+from tendo.singleton import SingleInstance, logger as singletonLogger
 import tableprint as tp
 import os
 import pathlib
@@ -10,6 +11,7 @@ import hmac
 import json
 import base64
 import re
+import sys
 
 from prompt_toolkit import HTML
 from prompt_toolkit.styles import Style
@@ -42,6 +44,15 @@ from prompt_toolkit.key_binding.bindings.focus import focus_next, focus_previous
 from prompt_toolkit.output.color_depth import ColorDepth
 from prompt_toolkit.application.current import get_app
 from prompt_toolkit.application import Application
+
+
+singletonLogger.disabled = True
+try:
+    # https://tendo.readthedocs.io/en/latest/#module-tendo.singleton
+    me = SingleInstance()
+except:
+    sys.exit("ATM is already running...")
+
 
 # The target element to focus when switching scenes. if none, equals None.
 # this is safe because only one app can run at a time.
@@ -386,8 +397,6 @@ def create_horizontal_button_list_keybindings(buttons):
 
 db_file_path = 'data/db.json'
 insecure_txt_file_path = 'data/____very_insecure_file____THERE_IS_NOTHING_IN_THIS_FILE______DO_NOT_OPEN__________DO_NOT_DO_IT______ONLY_FOR_MR_DUNNE.txt'
-
-# TODO: db versioning and locking.
 
 
 def load_db():
