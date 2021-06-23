@@ -47,6 +47,8 @@ from prompt_toolkit.application import Application
 
 
 singletonLogger.disabled = True
+"""Ensure that this program is only executed once at a time. This means this program
+cannot be executed concurrently on the same machine."""
 try:
     # https://tendo.readthedocs.io/en/latest/#module-tendo.singleton
     me = SingleInstance()
@@ -92,33 +94,44 @@ class LoginScreenState(ScreenState):
 
 
 class SignUpScreenState(ScreenState):
+    """Screen user can go to if doesn't have an account and wants to sign up to a
+    new account. Here the user can enter the account name, full name and pin and create
+    a new account. Signing up will take them to the menu screen."""
     root_screen_type = RootScreenType.SIGN_UP
 
 
 class MenuScreenState(ScreenState):
-    """Screen where user can navigate to all the other screens/use ATM's functions"""
+    """Screen where user can navigate to all the other screens/use ATM's functions."""
     root_screen_type = RootScreenType.MENU
 
 
 class DepositScreenState(ScreenState):
+    """Screen where user can deposit 'money' into their account. Note that only multiples of 5
+    cents are allowed (realistc some ATMs, including this one, have cash deposits)."""
     root_screen_type = RootScreenType.DEPOSIT
 
 
 class WithdrawScreenState(ScreenState):
+    """Screen where user can withdraw 'money' from their account. Can only withdraw multiples
+    of $20 as out ATM only spits out $20 bills."""
     root_screen_type = RootScreenType.WITHDRAW
 
 
 class AccountScreenState(ScreenState):
+    """Screen where user can see their account details and can also change them. The user
+    can also see how many transactions they have made and can click to go to the transactions screen."""
     root_screen_type = RootScreenType.ACCOUNT
 
 
 class TransactionsScreenFilter(Enum):
+    """Filters for the transaction screen. eg. DEPOSIT_ONLY = only show deposits to user."""
     DEPOSIT_ONLY = auto()
     WITHDRAW_ONLY = auto()
     BOTH = auto()
 
 
 class TransactionsScreenState(ScreenState):
+    """Screen where user can view their transaction history (deposits+withdrawals)."""
     root_screen_type = RootScreenType.TRANSACTIONS
 
     def __init__(self, session, filter):
@@ -127,32 +140,46 @@ class TransactionsScreenState(ScreenState):
 
 
 class ChangeUsernameScreenState(ScreenState):
+    """Screen where user can change their username."""
     root_screen_type = RootScreenType.CHANGE_USERNAME
 
 
 class ChangeNameScreenState(ScreenState):
+    """Screen where user can change their full name."""
     root_screen_type = RootScreenType.CHANGE_NAME
 
 
 class ChangePinScreenState(ScreenState):
+    """Screen where user can change their pin."""
     root_screen_type = RootScreenType.CHANGE_PIN
 
 
 class DeleteAccount1ScreenState(ScreenState):
+    """Screen user is taken to when they first want to delete their account. This ensures they
+    don't delete their account by accident as it is a confirmation dialogue."""
     root_screen_type = RootScreenType.DELETE_ACCOUNT_1
 
 
 class DeleteAccount2ScreenState(ScreenState):
+    """Screen user is taken to if they confirm they want to delete their account. Here they
+    have to enter their username and once submitted their account is permanently deleted."""
     root_screen_type = RootScreenType.DELETE_ACCOUNT_2
 
 
 class Session:
+    """A session stores the database object (which is created once at the initiation of this program),
+    as well as the current user that is logged in. Created session objects are passed between different
+    screens, meaning the session is created once the user initially signs in and this same session
+    object is used until the user logs out."""
+
     def __init__(self, db, account_id=None):
         self.db = db
         self.account_id = account_id
 
 
 def table_to_txt(table):
+    """Converts a table (a two dimensional list - each item in the list equal to a row in the table,
+    with items in each row equal to columns in the table), into a textual format which is human-readable."""
     def add_row_separator(ch):
         nonlocal txt
         for size in col_max_lens:
@@ -185,14 +212,18 @@ def table_to_txt(table):
 
 
 def encode_bytes(b):
+    """Encodes a bytes object to text to be stored in the database."""
     return base64.b64encode(b).decode('ascii')
 
 
 def decode_bytes(b):
+    """Decodes a textually encoded bytes object read from the database back into a bytes object."""
     return base64.b64decode(b)
 
 
 def format_balance(balance):
+    """Formats a balance integer representing a value in cents, to '$dd.cc' for presentation
+    to the user."""
     balance_str = str(balance).zfill(3)
     dollars = balance_str[:-2]
     cents = balance_str[-2:]
@@ -200,6 +231,7 @@ def format_balance(balance):
 
 
 def delete_folder(pth):
+    """Deletes the folder at the given path."""
     p = pathlib.Path(pth)
     # https://stackoverflow.com/questions/303200/how-do-i-remove-delete-a-folder-that-is-not-empty
     for sub in p.iterdir():
@@ -211,16 +243,29 @@ def delete_folder(pth):
 
 
 class TransactionType(Enum):
+    """Represents the type of transaction."""
     DEPOSIT = 'd'
     WITHDRAW = 'w'
 
 
 class DB:
+    """This is an interface for reading and writing from the JSON database located at data/db.json.
+    This database object is created once at the beginning of the program (meaning the database is only read from once),
+    and is accessed through the session class which is passed between screens. All writing to this database is also
+    reflected in the data/____very_insecure_file____THERE_IS_NOTHING_IN_THIS_FILE______DO_NOT_OPEN__________DO_NOT_DO_IT______ONLY_FOR_MR_DUNNE.txt
+    file which is a textual report containing all the decrypted PINS and account details for the marker of this project.
+    NOTE: user balance is stored as an integer containing number of cents."""
+
     def __init__(self, data, insecure_txt_db):
+        """This is the value of the JSON database located in data/db.json."""
         self._data = data
+        """This is a JSON object containing the unencoded PINS of the ATM users. This is not secure but
+        is included so that a nice report can be printed for the marker of this project, which includes
+        the decrypted PINS and details in a readable table format."""
         self._insecure_text_db = insecure_txt_db
 
     def get_account_from_account_id(self, account_id):
+        """Reads, parses and returns the account details associated with the given account id."""
         account = self._data['accounts'][account_id]
         return {
             "account_id": account_id,
@@ -240,6 +285,7 @@ class DB:
         }
 
     def get_account_from_username(self, username):
+        """Reads, passes and returns the account details associated with the given username."""
         account_username_to_account_id = self._data['account_username_to_account_id']
         if username not in account_username_to_account_id:
             return None
@@ -247,6 +293,7 @@ class DB:
         return self.get_account_from_account_id(account_id)
 
     def make_account_with_details(self, username, name, pin):
+        """Creates a new account with the given details, and writes it to the database."""
         account_id = str(uuid4())
         salt, pw_hash = hash_new_password(pin)
         self._data['accounts'][account_id] = {
@@ -258,51 +305,70 @@ class DB:
             'created_at': datetime.now().timestamp()
         }
         self._data['account_username_to_account_id'][username] = account_id
+        # Save decrypted pin to insecure database solely for usage in table report for marker.
         self._insecure_text_db[account_id] = pin
         save_db(self)
+        # Create receipt folder.
         os.mkdir(f'receipts/{username}')
         return account_id
 
     def change_account_username(self, account_id, new_username):
+        """Changes the username of the account associated with the given account_id to the given
+        new_username."""
         old_username = self._data['accounts'][account_id]['username']
         self._data['accounts'][account_id]['username'] = new_username
         self._data['account_username_to_account_id'].pop(old_username)
         self._data['account_username_to_account_id'][new_username] = account_id
         save_db(self)
+        # Rename receipts directory to reflect new username.
         os.rename(f'receipts/{old_username}', f'receipts/{new_username}')
 
     def change_account_name(self, account_id, new_name):
+        """Changes the account name of the account associated with the given account_id to the
+        given new_name"""
         self._data['accounts'][account_id]['name'] = new_name
         save_db(self)
 
     def change_account_pin(self, account_id, new_pin):
+        """Changes the pin of the account associated with the given account_id to the given
+        new_pin"""
         salt, pw_hash = hash_new_password(new_pin)
         self._data['accounts'][account_id]['pin'] = [
             encode_bytes(salt), encode_bytes(pw_hash)]
+        # Save decrypted pin to insecure database solely for usage in table report for marker.
         self._insecure_text_db[account_id] = new_pin
         save_db(self)
 
     def delete_account(self, account_id):
+        """Permanently deletes the account associated with the given account_id."""
         username = self._data['accounts'][account_id]['username']
         self._data['accounts'].pop(account_id)
         self._data['account_username_to_account_id'].pop(username)
         self._insecure_text_db.pop(account_id)
         save_db(self)
+        # Delete the account's receipts folder.
         delete_folder(f'receipts/{username}')
 
     def set_account_balance(self, account_id, new_balance):
+        """Changes the balance of the account associated with the given account_id to the
+        new_balance given."""
         self._data['accounts'][account_id]['balance'] = new_balance
         save_db(self)
 
     def record_account_transaction(self, account_id, type, value):
+        """Records the transaction in the database for the account. A transaction has a type
+        (deposit/withdrawal) and a value (the amount deposited/withdrawn). This method also
+        prints out a receipt under the user's receipts folder."""
         date = datetime.now()
         timestamp = date.timestamp()
+        # Append transaction to database.
         self._data['accounts'][account_id]['transactions'].append({
             'type': type.value,
             'value': value,
             'timestamp': timestamp
         })
         save_db(self)
+        # Create tables for receipt data.
         t = TablePrintOut()
         tp.table([
             ["DATE", date.strftime("%d/%m/%Y")],
@@ -328,18 +394,28 @@ class DB:
             "APPROVED",
             ""
         ])
+        # Write receipt. The name of the receipt is the current timestamp.
         with open(f"receipts/{account['username']}/{timestamp}.txt", "w", encoding="utf-8") as file:
             file.write(receipt_txt)
 
     def json(self):
+        """Returns database values as json which can be directly stored in the db.json file."""
         return self._data
 
     def insecure_txt(self):
+        """Returns the database values as a human-readable textual format in the form of a table.
+        This is for the marker so the marker can see the decrypted account PINS and can also see
+        the details of each user in a nice table format instead of a minified JSON format. Before the table
+        on the first line of this file is a JSON object which maps the user account ids to their PINS. This
+        is significant as this is the only JSON object which is stored that holds each account's decrypted PIN
+        (the database only stores the encrypted PINS), meaning it is the only source for creating this
+        "insecure_txt" table."""
         insecure_txt_db_json = json.dumps(
             self._insecure_text_db, separators=(',', ':'))
         table = []
         table.append(['account_id', 'created_at',
                       'username', 'name', 'pin', 'balance', 'transactions'])
+        # Populate table values.
         for account_id, account_data in self._data['accounts'].items():
             created_at = str(account_data['created_at'])
             username = account_data['username']
@@ -400,11 +476,13 @@ insecure_txt_file_path = 'data/____very_insecure_file____THERE_IS_NOTHING_IN_THI
 
 
 def load_db():
+    """Creates an instance of the database class with values read from the db.json file."""
     with open(db_file_path, 'r', encoding="utf-8") as db_file, open(insecure_txt_file_path, 'r', encoding="utf-8") as insecure_txt_file:
         return DB(json.load(db_file), json.loads(insecure_txt_file.readline()))
 
 
 def save_db(db):
+    """Saves the database values to the db.json file and insecure text report."""
     with open(db_file_path, 'w', encoding="utf-8") as file:
         json.dump(db.json(), file, separators=(',', ':'))
     with open(insecure_txt_file_path, 'w', encoding="utf-8") as file:
@@ -434,10 +512,13 @@ def is_correct_password(salt, pw_hash, password):
 
 
 def is_alnum_and_starts_with_al(str):
+    """Tests if the string is alphanumeric (only contains letters A-Z or numbers),
+    and starts with a letter"""
     return len(str) == 0 or (str.isalnum() and str[0].isalpha())
 
 
 def LoginScreen(controller):
+    """Screen where user enters their details to log in to their account."""
     error_msg = None
 
     def set_error_msg(msg):
@@ -446,6 +527,7 @@ def LoginScreen(controller):
         get_app().invalidate()
 
     def check_username_valid(username):
+        """The username can only contain letters and numbers, and must start with a letter."""
         if len(username.strip()) > 0:
             if not is_alnum_and_starts_with_al(username.strip()):
                 get_app().layout.focus(username_textfield)
@@ -458,6 +540,7 @@ def LoginScreen(controller):
         return False
 
     def check_pin_valid(pin):
+        """The PIN has to be four digits."""
         if len(pin) == 4 and pin.isdecimal():
             return True
         get_app().layout.focus(pin_textfield)
@@ -477,20 +560,25 @@ def LoginScreen(controller):
         return True  # Keeps text.
 
     def on_ok_clicked():
+        """The user submitted the form."""
         username = username_textfield.text.strip().lower()
         pin = pin_textfield.text
         if not check_username_valid(username) or not check_pin_valid(pin_textfield.text):
+            # Fields not valid.
             return
         set_error_msg(None)
         account = controller.state.session.db.get_account_from_username(
             username)
         if not account:
+            # No account with username exists.
             set_error_msg("Incorrect username or pin")
             return
         account_pin = account['pin']
         if not is_correct_password(account_pin['salt'], account_pin['pw_hash'], pin):
+            # PIN is wrong.
             set_error_msg("Incorrect username or pin")
             return
+        # Create session and go to menu screen.
         controller.set_state(MenuScreenState(
             Session(db=controller.state.session.db, account_id=account['account_id'])))
 
@@ -543,6 +631,7 @@ def LoginScreen(controller):
 
 
 def SignUpScreen(controller):
+    """Screen where user can sign up to create a new account."""
     error_msg = None
 
     def set_error_msg(msg):
@@ -560,6 +649,7 @@ def SignUpScreen(controller):
                     return False
                 return True
             get_app().layout.focus(username_textfield)
+            # Usernames must be unique.
             set_error_msg("Username is already taken")
             return False
         get_app().layout.focus(username_textfield)
@@ -599,22 +689,26 @@ def SignUpScreen(controller):
         return True  # Keeps text.
 
     def on_ok_clicked():
+        """Called when form is submitted."""
         username = username_textfield.text.strip().lower()
         name = name_textfield.text.strip()
         pin = pin_textfield.text
         if not check_username_valid(username) or not check_name_valid(username) or not check_pin_valid(pin_textfield.text):
+            # Details invalid.
             return
         set_error_msg(None)
+        # Create new account.
         account_id = controller.state.session.db.make_account_with_details(
             username=username,
             name=name,
             pin=pin
         )
+        # Create session logged in as the new account and go to menu screen.
         controller.set_state(MenuScreenState(
             Session(db=controller.state.session.db, account_id=account_id)))
 
     def on_back_clicked():
-        # Go to Sign Up screen.
+        # Go to Login screen.
         new_state = LoginScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
@@ -670,6 +764,7 @@ def SignUpScreen(controller):
 
 
 def MenuScreen(controller):
+    """Screen where user can access all the other screens."""
     def on_deposit_click():
         # Go to Deposit screen.
         new_state = DepositScreenState(session=controller.state.session)
@@ -718,6 +813,7 @@ def MenuScreen(controller):
 
 
 def parse_amount_input(amount):
+    """Parses a textual input into cents values. eg. 50.42 --> 5042"""
     amount_split = amount.split(".")
     dollars = int(amount_split[0] or 0)
     cents = 0
@@ -729,6 +825,7 @@ def parse_amount_input(amount):
 
 
 def DepositScreen(controller):
+    """Screen where user can deposit 'money' into their account."""
     account = controller.state.session.db.get_account_from_account_id(
         controller.state.session.account_id)
     error_msg = None
@@ -738,6 +835,8 @@ def DepositScreen(controller):
         error_msg = msg
         get_app().invalidate()
 
+    # Basically can be anything but a empty decimal place and cannot have
+    # more than two decimal places. Also of course must be numeric.
     amount_re = re.compile(r"^(\d+(\.\d{0,2})?|\.\d{1,2})$")
 
     def check_amount_valid(amount):
@@ -767,13 +866,17 @@ def DepositScreen(controller):
             return
         set_error_msg(None)
         cents = parse_amount_input(amount_textfield.text)
+        # Add deposited amount to database balance.
         controller.state.session.db.set_account_balance(
             controller.state.session.account_id, account['balance'] + cents)
+        # Record the deposit transaction.
         controller.state.session.db.record_account_transaction(
             controller.state.session.account_id, TransactionType.DEPOSIT, cents)
+        # Go to menu screen.
         controller.set_state(MenuScreenState(session=controller.state.session))
 
     def on_back_clicked():
+        # Go back to menu screen.
         new_state = MenuScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
@@ -813,6 +916,8 @@ def DepositScreen(controller):
 
 
 def WithdrawScreen(controller):
+    """Screen where user can withdraw 'money' from their account. Note that this ATM only
+    supports withdrawing $20 bills, so the amount must be a multiple of $20."""
     account = controller.state.session.db.get_account_from_account_id(
         controller.state.session.account_id)
     error_msg = None
@@ -822,6 +927,7 @@ def WithdrawScreen(controller):
         error_msg = msg
         get_app().invalidate()
 
+    # Same regexp as in depositing.
     amount_re = re.compile(r"^(\d+(\.\d{0,2})?|\.\d{1,2})$")
 
     def check_amount_valid(amount):
@@ -839,9 +945,11 @@ def WithdrawScreen(controller):
             set_error_msg("That is not a valid amount of cents")
             return False
         if cents % 2000 != 0:
+            # 2000 cents = $20.
             get_app().layout.focus(amount_textfield)
             set_error_msg("Can only withdraw $20 bills")
             return False
+        # Check account actually has enough money.
         if cents > account['balance']:
             get_app().layout.focus(amount_textfield)
             set_error_msg("Insufficient funds")
@@ -859,13 +967,17 @@ def WithdrawScreen(controller):
             return
         set_error_msg(None)
         cents = parse_amount_input(amount_textfield.text)
+        # Subtract amount withdrawn from balance in database.
         controller.state.session.db.set_account_balance(
             controller.state.session.account_id, account['balance'] - cents)
+        # Record the withdrawal transaction.
         controller.state.session.db.record_account_transaction(
             controller.state.session.account_id, TransactionType.WITHDRAW, cents)
+        # Go to menu screen.
         controller.set_state(MenuScreenState(session=controller.state.session))
 
     def on_back_clicked():
+        # Go back to menu screen.
         new_state = MenuScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
@@ -905,6 +1017,7 @@ def WithdrawScreen(controller):
 
 
 def prettydate(d):
+    """Returns the relative date in human readable form."""
     # https://stackoverflow.com/questions/410221/natural-relative-days-in-python
     diff = datetime.now() - d
     s = diff.seconds
@@ -929,6 +1042,7 @@ def prettydate(d):
 
 
 def AccountScreen(controller):
+    """Screen where user can view and change their account details + their transaction history."""
     body_keybindings = KeyBindings()
 
     @body_keybindings.add('escape')
@@ -941,27 +1055,33 @@ def AccountScreen(controller):
         controller.state.session.account_id)
 
     def on_view_transactions_click():
+        # Go to View Transactions screen.
         new_state = TransactionsScreenState(
             session=controller.state.session, filter=TransactionsScreenFilter.BOTH)
         controller.set_state(new_state)
 
     def on_change_username_click():
+        # Go to change username screen.
         new_state = ChangeUsernameScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
     def on_change_name_click():
+        # Go to change name screen.
         new_state = ChangeNameScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
     def on_change_pin_click():
+        # Go to change pin screen.
         new_state = ChangePinScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
     def on_logout_click():
+        # Remove account id from session (ie. create new one) and go to login screen.
         controller.set_state(LoginScreenState(
             session=Session(db=controller.state.session.db)))
 
     def on_delete_account_click():
+        # Go to first delete account confirmation screen.
         new_state = DeleteAccount1ScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
@@ -1067,14 +1187,17 @@ def TransactionsScreen(controller):
         controller.state.session.account_id)
 
     def filter_deposits():
+        # Only show deposits to user.
         controller.set_state(TransactionsScreenState(
             session=controller.state.session, filter=TransactionsScreenFilter.DEPOSIT_ONLY))
 
     def filter_withdrawals():
+        # Only show withdrawals to user.
         controller.set_state(TransactionsScreenState(
             session=controller.state.session, filter=TransactionsScreenFilter.WITHDRAW_ONLY))
 
     def filter_both():
+        # Show both deposits and withdrawals to user.
         controller.set_state(TransactionsScreenState(
             session=controller.state.session, filter=TransactionsScreenFilter.BOTH))
 
@@ -1084,12 +1207,14 @@ def TransactionsScreen(controller):
         Button('Both', handler=filter_both)
     ]
 
+    # Gather values of the transactions table.
     table_rows = [
         [
             'DEPOSIT' if transaction['type'] == TransactionType.DEPOSIT else 'WITHDRAW',
             format_balance(transaction['value']),
             prettydate(transaction['timestamp'])
         ] for transaction in account['transactions'][::-1] if (
+            # Filter for showing deposits/withdrawals.
             True if controller.state.filter == TransactionsScreenFilter.BOTH else (
                 transaction['type'] == TransactionType.DEPOSIT
                 if controller.state.filter == TransactionsScreenFilter.DEPOSIT_ONLY
@@ -1129,6 +1254,7 @@ def TransactionsScreen(controller):
     )
 
     def on_back_click():
+        # Go back to account screen.
         new_state = AccountScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
@@ -1167,6 +1293,7 @@ def ChangeUsernameScreen(controller):
             set_error_msg("Username field is empty")
             return False
         if username == account['username']:
+            # Cannot change username to current username.
             get_app().layout.focus(username_textfield)
             set_error_msg("That is your current username")
             return False
@@ -1178,6 +1305,7 @@ def ChangeUsernameScreen(controller):
                 return False
             return True
         get_app().layout.focus(username_textfield)
+        # Username must be unique.
         set_error_msg("Username is already taken")
         return False
 
@@ -1192,11 +1320,14 @@ def ChangeUsernameScreen(controller):
         if not check_username_valid(username):
             return
         set_error_msg(None)
+        # Save new username to database.
         controller.state.session.db.change_account_username(
             controller.state.session.account_id, username)
+        # Go to menu screen.
         controller.set_state(MenuScreenState(session=controller.state.session))
 
     def on_back_clicked():
+        # Go back to account screen.
         new_state = AccountScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
@@ -1248,6 +1379,7 @@ def ChangeNameScreen(controller):
     def check_name_valid(name):
         if len(name.strip()) > 0:
             if name == account['name']:
+                # Cannot change name to current name.
                 get_app().layout.focus(name_textfield)
                 set_error_msg("That is your current name")
                 return False
@@ -1267,11 +1399,14 @@ def ChangeNameScreen(controller):
         if not check_name_valid(name):
             return
         set_error_msg(None)
+        # Save new full name to database.
         controller.state.session.db.change_account_name(
             controller.state.session.account_id, name)
+        # Go to menu screen.
         controller.set_state(MenuScreenState(session=controller.state.session))
 
     def on_back_clicked():
+        # Go back to account screen.
         new_state = AccountScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
@@ -1338,11 +1473,14 @@ def ChangePinScreen(controller):
         if not check_pin_valid(pin):
             return
         set_error_msg(None)
+        # Save new pin to database.
         controller.state.session.db.change_account_pin(
             controller.state.session.account_id, pin)
+        # Go to menu screen.
         controller.set_state(MenuScreenState(session=controller.state.session))
 
     def on_back_clicked():
+        # Go back to account screen.
         new_state = AccountScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
@@ -1383,14 +1521,18 @@ def ChangePinScreen(controller):
 
 
 def DeleteAccount1Screen(controller):
+    """This screen is the first confirmation screen for when a user wants to delete
+    their account."""
     account = controller.state.session.db.get_account_from_account_id(
         controller.state.session.account_id)
 
     def on_ok_clicked():
+        # Go to second account deletion confirmation screen.
         controller.set_state(DeleteAccount2ScreenState(
             session=controller.state.session))
 
     def on_back_clicked():
+        # Cancel deletion: go back to account screen.
         new_state = AccountScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
@@ -1422,6 +1564,9 @@ def DeleteAccount1Screen(controller):
 
 
 def DeleteAccount2Screen(controller):
+    """This screen is the second confirmation screen for when a user wants to delete
+    their account. Here the user has to enter their account's name into the input field
+    and then they can permanently delete their account."""
     account = controller.state.session.db.get_account_from_account_id(
         controller.state.session.account_id)
     error_msg = None
@@ -1432,6 +1577,7 @@ def DeleteAccount2Screen(controller):
         get_app().invalidate()
 
     def check_username_valid(username):
+        # Check that they entered their name correctly.
         if username.lower() == account['username']:
             return True
         get_app().layout.focus(username_textfield)
@@ -1447,12 +1593,15 @@ def DeleteAccount2Screen(controller):
     def on_ok_clicked():
         if not check_username_valid(username_textfield.text):
             return
+        # Delete the user's account permanently from database.
         controller.state.session.db.delete_account(
             controller.state.session.account_id)
+        # Go back to login screen.
         controller.set_state(LoginScreenState(
             session=Session(db=controller.state.session.db)))
 
     def on_back_clicked():
+        # Cancel deletion: go back to account screen.
         new_state = AccountScreenState(session=controller.state.session)
         controller.set_state(new_state)
 
@@ -1556,6 +1705,7 @@ def RootController(root_state=LoginScreenState(session=Session(db=load_db()))):
     return Controller(root_state, RootScreen)
 
 
+# Styling.
 bg_color = '#82aba4'
 dialog_bg_color = '#36213e'
 dialog_text_color = '#ffffff'
